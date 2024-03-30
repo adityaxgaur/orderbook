@@ -124,8 +124,6 @@ class BST:
             node = node.right
         return node.key
         
-        
-        
     def inorder(self, node) -> list:
         """ returns ascending list : left->root->right"""
         res = []
@@ -144,19 +142,19 @@ class BST:
             res = res + self.postorder(node.left)
         return res
         
-    def values(self, reverse=False):
+    def values(self, reverse=False) -> None:
         if reverse:
             return self.postorder(self.root)
         return self.inorder(self.root)
 
-TRADES = []  # ideally below to MatchineEngine class
+TRADES = []  # Global variable to store list of trades done.
 
 class OrderNotFoundException(Exception):
     pass
 
 class Order:
-    """ represent an order in orderbook"""
-    def __init__(self, order_id, symbol=None, side=None, price=None, volume=None, timestamp=None):
+    """ BUY or SELL order."""
+    def __init__(self, order_id, symbol=None, side=None, price=None, volume=None) -> None:
         self.order_id = int(order_id)
         self.symbol = symbol
         self.side = side
@@ -165,17 +163,17 @@ class Order:
             self.price = float(price)
         self._validate_volume(volume)
         self.volume = int(volume) if volume else None
-        self.timestamp = timestamp
+        self.timestamp = time.time()
     
-    def _validate_price(self, price):
+    def _validate_price(self, price) -> None:
         if not re.match(r'^\d+(\.\d{1,4})?$', price):
             raise ValueError('Invalid price format. Price should have up to 4 decimal places')
     
-    def _validate_volume(self, volume):
+    def _validate_volume(self, volume) -> None:
         if volume and int(volume) < 0:
             raise ValueError(f'Volume:{volume} should be greater than 0')
         
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"Order({', '.join(f'{key}={value}' for key, value in self.__dict__.items() if value)})"
         
 class Trade:
@@ -438,16 +436,15 @@ def runMatchingEngine(operations: list[str]) -> list[str]:
     order_book_mgr = OrderBookManager()
     for item in operations:
         action, *fields = item.split(',')
-        ts = time.time()
         try:
             if action == 'INSERT':
                 order_id, symbol, side, price, volume = fields[:5]
                 order = Order(order_id=order_id, symbol=symbol, side=side,
-                              price=price, volume=volume, timestamp=ts
+                              price=price, volume=volume,
                               )
             elif action == 'UPDATE':
                 order_id, price, volume = fields[:3]
-                order = Order(order_id=order_id, price=price, volume=volume, timestamp=ts)
+                order = Order(order_id=order_id, price=price, volume=volume)
             elif action == 'CANCEL':
                 order_id, = fields[0]
                 order = Order(order_id=order_id)
