@@ -318,42 +318,58 @@ class OrderBook:
         self.trades = []
         
     def insert_order(self, order: Order) -> None:
-        """ Insert a new order
+        """ Perform order matching for a new incoming order.
+            Remaining order is added to either buy_prices or sell_prices
         """
         # perform order matching
-        order = self.perform_order_matching(order)
-        if order.volume == 0:
+        remaining_order = self.perform_order_matching(order)
+        if remaining_order.volume == 0:
+            # order is fully-filled
             return
-        if order.side == 'BUY':
-            self.buy_prices.insert_order(order)
+        if remaining_order.side == 'BUY':
+            self.buy_prices.insert_order(remaining_order)
         else:
-            self.sell_prices.insert_order(order)
+            self.sell_prices.insert_order(remaining_order)
             
     def update_order(self, order: Order) -> None:
+        """ Update an existing order in the order book
+        Raises:
+           OrderNotFoundException: if order ID is not found in both  
+        """
+        # Determind whether order is on the buy side or sell side
         is_buy_side = self.buy_prices.order_exists(order.order_id)
+
         if is_buy_side:
             orig_order = self.buy_prices.order_map.get(order.order_id)
-            if not orig_order:
-                raise OrderNotFoundException(f'Order not found for id: {order.order_id}')
+        else:
+            orig_order = self.sell_prices.order_map.get(order.order_id)
+            
+        if not orig_order:
+            raise OrderNotFoundException(f'Order not found for id: {order.order_id}')
+            
+        if is_buy_side:
             if order.price != orig_order.price:
                 # price has changed so cancel the orig order and insert new
                 self.buy_prices.cancel_order(orig_order.order_id)
+                
+                # Update the side and symbol of incoming order
                 order.side = orig_order.side
                 order.symbol = orig_order.symbol
                 self.insert_order(order)
             else:
+                # price has not changed, update volume of original order
                 self.buy_prices.update_volume(order)
         else:
-            orig_order = self.sell_prices.order_map.get(order.order_id)
-            if not orig_order:
-                raise OrderNotFoundException(f'Order not found for id: {order.order_id}')
             if order.price != orig_order.price:
                 # price has changed so cancel the orig order and insert new
                 self.sell_prices.cancel_order(orig_order.order_id)
+                
+                # Update the side and symbol of incoming order
                 order.side = orig_order.side
                 order.symbol = orig_order.symbol
                 self.insert_order(order)
             else:
+                # price has not changed, update volume of original order
                 self.sell_prices.update_volume(order)
             
     def cancel_order(self, order: Order) -> None:
@@ -439,12 +455,16 @@ class OrderBookManager:
         
     def get_order_book(self, symbol: str) -> OrderBook:
         """ Retrieves instance of OrderBook for a given symbol"""
-        if symbol not in self.symbol_orderbook_map:
-            self.symbol_orderbook_map[symbol] = OrderBook(symbol)
-        return self.symbol_orderbook_map[symbol]
+        return self.symbol_orderbook_map.setdefault(symbol, OrderBook(symbol)) 
         
-    def process_order(self, order, action):
-        """ delegate INSERT, UPDATE and CANCEL action to orderbook"""
+    def process_order(self, order: Order, action: str) -> None:
+        """ Delegate INSERT, UPDATE and CANCEL action to appropriate order book
+        Args:
+            order (Order): Incoming order
+            action (str): INSERT, UPDATE or CANCEL 
+        Raises:
+            OrderNotFoundException : If the order ID is not found in the order_symnol_map
+        """
         if action == 'INSERT':
             self.order_symbol_map[order.order_id] = order.symbol
             orderbook = self.get_order_book(order.symbol)
@@ -460,6 +480,7 @@ class OrderBookManager:
                 orderbook.cancel_order(order)
         
     def view(self) -> list[str]:
+        """ Generates a view of order books and the trades"""
         global TRADES
         result = [str(trade) for trade in TRADES]
         symbols = sorted(self.symbol_orderbook_map.keys())
@@ -476,8 +497,14 @@ class OrderBookManager:
 # The function accepts STRING_ARRAY operations as parameter.
 #
 def runMatchingEngine(operations: list[str]) -> list[str]:
-    global TRADES
-    TRADES = []
+    """ Executes the order matching operations and returns the resulting order book views
+    Args:
+        operations(list[str]): A list of string representing incoming orders
+    
+    Returns
+        list[str]: list of strings representing trades done in chronological order followed 
+                   by price-depth of all orderbooks
+    """
     order_book_mgr = OrderBookManager()
     for item in operations:
         action, *fields = item.split(',')
@@ -494,11 +521,12 @@ def runMatchingEngine(operations: list[str]) -> list[str]:
                 order_id, = fields[0]
                 order = Order(order_id=order_id)
             else:
-                pass
+                pass  # skip invalid actions 
         except ValueError:
             print(f'Order format is not correct : {item}')
             continue
         else:
+            # Process the current order using OrderBookManager 
             try:
                 order_book_mgr.process_order(order, action)
             except OrderNotFoundException:
