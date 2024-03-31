@@ -233,7 +233,7 @@ class OrderPrices:
         
     def get_order(self, price) -> float:
         """
-            Returns the first order from the list of orders sorted by timestamp. 
+            Returns the first order from the list of orders sorted by timestamp.
             First order has the highest time priority
         """
         return self.price_map[price][0]
@@ -285,11 +285,12 @@ class OrderPrices:
         price_orders = self.price_map[orig_order.price]
         if price_orders:
             price_orders.remove(orig_order)
-            if not price_orders:  # if no orders left at this price then remove from price_map and price_bst 
+            if not price_orders:  # if no orders left at this price then remove from price_map and price_bst
                 del self.price_map[orig_order.price]
                 self.remove_price(orig_order.price)
         
     def price_depth(self) -> list[str]:
+        """Retrieves prices from BST in reverse order along with total volume of orders at each level"""
         prices = self.price_bst.values(reverse=True)
         result = []
         for price in prices:
@@ -299,11 +300,17 @@ class OrderPrices:
         return result
         
 class OrderBook:
-    """Represent orderbook for a given symbol.
+    """Represents an order book for a given symbol, containing buy and sell orders.
+    Attributes:
+        symbol (str) : The symbol associated with the order book
+        buy_prices (OrderPrices) : An OrderPrices object managing BUY orders
+        sell_prices (OrderPrices) : An OrderPrices object managing SELL orders
+        trades(list): A list to store filled orders
     
     """
     def __init__(self, symbol: str):
         """
+        Initialize OrderBook for a given symbol
         """
         self.symbol = symbol
         self.buy_prices = OrderPrices('BUY')
@@ -311,8 +318,7 @@ class OrderBook:
         self.trades = []
         
     def insert_order(self, order: Order) -> None:
-        """ If bxuy order:
-            if sell order -> same operation but with sell_prices and sell_prices_map
+        """ Insert a new order
         """
         # perform order matching
         order = self.perform_order_matching(order)
@@ -358,11 +364,20 @@ class OrderBook:
             self.sell_prices.cancel_order(order.order_id)
             
             
-    def perform_order_matching(self, order: Order):
-        "blah"
-        global TRADES
+    def perform_order_matching(self, order: Order) -> Order:
+        """Matches an incoming order with existing order in order book
+        Args:
+            order (Order): The incoming order to be matched
+        Returns:
+            Order: The remaining unmatched portion of the order
+        """
+        global TRADES   # global list to store filled orders from all order books
+        
         if order.side == 'BUY':
+            # for incoming buy order get the best ask price
             best_price = self.sell_prices.best_price()
+            # continously check the best price until either the order is fully filled
+            # or no sell order exist in orderbook below the bid price
             while best_price is not None and \
                     order.price >= best_price and \
                     order.volume > 0:  # order with 0 qty will not be matched
@@ -372,15 +387,19 @@ class OrderBook:
                 trade = Trade(order.symbol, best_price,
                               matched_volume, order.order_id,
                               filled_order.order_id)
-                TRADES.append(trade)
+                TRADES.append(trade)  # record filled order
                 order.volume -= matched_volume
                 filled_order.volume -= matched_volume
                 if filled_order.volume == 0:
                     # cancel this order as volume = 0
                     self.cancel_order(filled_order)
+                # update the best price for next iteration
                 best_price = self.sell_prices.best_price()
         else:
+            # for incoming sell order get the best ask price
             best_price = self.buy_prices.best_price()
+            # continously check the best price until either the order is fully filled
+            # or no buy order exist in orderbook above the ask price
             while best_price is not None and \
                     order.price <= best_price and \
                     order.volume > 0:  # order with 0 qty will not be matched
@@ -390,14 +409,14 @@ class OrderBook:
                 trade = Trade(order.symbol, best_price,
                               matched_volume, order.order_id,
                               filled_order.order_id)
-                TRADES.append(trade)
+                TRADES.append(trade)  # record filled order
                 order.volume -= matched_volume
                 filled_order.volume -= matched_volume
                 if filled_order.volume == 0:
                     # cancel this order as volume = 0
                     self.cancel_order(filled_order)
                 best_price = self.buy_prices.best_price()
-        # return the remaining order
+        # return the remaining unmatched portion of the incoming order
         return order
     
     def view(self) -> list[str]:
@@ -408,15 +427,18 @@ class OrderBook:
         return result
     
 class OrderBookManager:
-    """ Maintains multiple order books for different symbols
+    """ Manages multiple order books for different symbols
+    Attributes
+        symbol_orderbook_map (dict) : A dict mapping different symbols to their respective order books
+        order_symbol_map (dict): A dict mapping order_id to their symbols
         
     """
-    def __init__(self):
+    def __init__(self) -> None:
         self.symbol_orderbook_map = {}  # dict(symbol -> order_book)
         self.order_symbol_map = {}  # dict(order_id -> symbol)
         
     def get_order_book(self, symbol: str) -> OrderBook:
-        """ returns OrderBook for a give symbol"""
+        """ Retrieves instance of OrderBook for a given symbol"""
         if symbol not in self.symbol_orderbook_map:
             self.symbol_orderbook_map[symbol] = OrderBook(symbol)
         return self.symbol_orderbook_map[symbol]
