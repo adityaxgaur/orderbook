@@ -166,6 +166,7 @@ class Order:
         self.timestamp = time.time()
     
     def _validate_price(self, price) -> None:
+        """ price should have up to 4 decimal places"""
         if not re.match(r'^\d+(\.\d{1,4})?$', price):
             raise ValueError('Invalid price format. Price should have up to 4 decimal places')
     
@@ -177,94 +178,116 @@ class Order:
         return f"Order({', '.join(f'{key}={value}' for key, value in self.__dict__.items() if value)})"
         
 class Trade:
-    """Trade done after matching orders"""
-    def __init__(self, symbol, price, volume, taker_order_id, maker_order_id):
+    """Trade to fill order after matching"""
+    def __init__(self, symbol, price, volume, taker_order_id, maker_order_id) -> None:
         self.symbol = symbol
-        self.price = price
+        self.price = price  # best bid or ask price available from market maker order
         self.volume = volume
-        self.taker_order_id = taker_order_id
-        self.maker_order_id = maker_order_id
+        self.taker_order_id = taker_order_id  # new or update order
+        self.maker_order_id = maker_order_id  # existing order in orderbook which can match taker order
         
-    def __str__(self):
+    def __str__(self) -> None:
         return f"{self.symbol},{self.price:g},{self.volume},{self.taker_order_id},{self.maker_order_id}"
     
         
 class OrderPrices:
-    """Abstact out how the prices are stored inside Orderbook
+    """
+        OrderPrices manages prices using a binary search tree (BST).
+        Each price is associated with a list of orders, sorted by timestamp, and stored in a dictionary.
+        Additionally, individual orders are stored in a dictionary keyed by their unique order ID.
     """
     def __init__(self, side):
-        self.price_bst = BST()  # prices stored in BST
-        self.side = side  # BUY or SELL
-        self.price_map = {}  # price -> list of orders sorted by timestamp
-        self.order_map = {}  # order_id -> order
-        self.max_price = None
-        self.min_price = None
+        """
+            Change the implementation to store list of order_ids in price_map!!!
+        """
+        self.price_bst = BST()  # Prices stored in a binary search tree.
+        self.side = side  # BUY or SELL order
+        self.price_map = {}  # Maps prices to lists of orders sorted by timestamp.
+        self.order_map = {}  # Maps order IDs to individual orders.
+        self.max_price = None  # Highest price on the buy(bid) side
+        self.min_price = None  # Lowest price on the sell(ask) side
         
     @property
     def is_buy_side(self) -> bool:
+        """
+        Checks if the current side is for buying
+        """
         return self.side == 'BUY'
         
     def order_exists(self, order_id: int) -> bool:
+        """
+        Checks if an order with give ID exists
+        """
         order = self.order_map.get(order_id)
         return bool(order)
     
-    def best_price(self)->float:
+    def best_price(self) -> float:
         """
-        returns max buy price if side == 'BUY'
-        and min sell price if side == 'SELL'
+        Returns the highest buy price if side is 'BUY'(BID)
+        or the lowest sell price if side is 'SELL'(ASK)
         """
         price = self.min_price
         if self.is_buy_side:
             price = self.max_price
         return price
         
-    def get_order(self, price):
-        """ return the first order from the sorted array. ideally could be a queue"""
+    def get_order(self, price) -> float:
+        """
+            Returns the first order from the list of orders sorted by timestamp. 
+            First order has the highest time priority
+        """
         return self.price_map[price][0]
     
-    def create_price(self, price: float):
+    def create_price(self, price: float) -> None:
+        """Crates a new price entry in binary search tree"""
         if self.max_price is None or price > self.max_price:
             self.max_price = price
         if self.min_price is None or price < self.min_price:
             self.min_price = price
-            
         self.price_bst.insert(price)
         
-    def remove_price(self, price: float):
+    def remove_price(self, price: float) -> float:
+        """ Removes the price entry from BST """
         self.price_bst.delete(price)
         if self.max_price == price:
             self.max_price = self.price_bst.maximum()
         if self.min_price == price:
             self.min_price = self.price_bst.minimum()
             
-    def insert_order(self, order: Order):
+    def insert_order(self, order: Order) -> None:
+        """
+            Insert order price in BST if doesn't exist already
+            Insert Order in sorted order list keyed against the price
+            Insert in order_map dict
+        """
         if order.price not in self.price_map:
             self.create_price(order.price)
         self.price_map.setdefault(order.price, []).append(order)
         self.order_map[order.order_id] = order
         
-    def update_volume(self, order: Order):
-        # Volume changed
+    def update_volume(self, order: Order) -> None:
+        """ Updates volume of an existing order """
         orig_order = self.order_map[order.order_id]
         is_volume_reduced = order.volume < orig_order.volume
         orig_order.volume = order.volume
         if not is_volume_reduced:
-            # order list in price_map is sorted by timestamp so update moves order to end of the list
+            # If volume is not reduced then order looses it time priority and goes to the end of order list
             orig_order.timestamp = order.timestamp
-            self.price_map[orig_order.price].remove(orig_order)
-            self.price_map[orig_order.price].append(orig_order)
+            orderlist = self.price_map[orig_order.price]
+            orderlist.remove(orig_order)
+            orderlist.append(orig_order)
             
-    def cancel_order(self, order_id: int):
-        orig_order = self.order_map.get(order_id)
+    def cancel_order(self, order_id: int) -> None:
+        """ Cancels an order """
+        orig_order = self.order_map.pop(order_id, None)
         if not orig_order:
             raise OrderNotFoundException(f'Order not found for id:{order_id}')
-        orders = self.price_map[orig_order.price]
-        orders.remove(orig_order)  # O(n) slow operation !!
-        if len(orders) == 0:
-            del self.price_map[orig_order.price]
-            self.remove_price(orig_order.price)
-            
-        del self.order_map[order_id]
+        price_orders = self.price_map[orig_order.price]
+        if price_orders:
+            price_orders.remove(orig_order)
+            if not price_orders:  # if no orders left at this price then remove from price_map and price_bst 
+                del self.price_map[orig_order.price]
+                self.remove_price(orig_order.price)
         
     def price_depth(self) -> list[str]:
         prices = self.price_bst.values(reverse=True)
@@ -459,7 +482,6 @@ def runMatchingEngine(operations: list[str]) -> list[str]:
             except OrderNotFoundException:
                 print(f'Order does not exist : {item}')
                 continue
-        
         
     return order_book_mgr.view()
     
