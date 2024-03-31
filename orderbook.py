@@ -186,7 +186,7 @@ class Trade:
         self.taker_order_id = taker_order_id  # new or update order
         self.maker_order_id = maker_order_id  # existing order in orderbook which can match taker order
         
-    def __str__(self) -> None:
+    def __str__(self) -> str:
         return f"{self.symbol},{self.price:g},{self.volume},{self.taker_order_id},{self.maker_order_id}"
     
         
@@ -198,11 +198,13 @@ class OrderPrices:
     """
     def __init__(self, side):
         """
-            Change the implementation to store list of order_ids in price_map!!!
+        Initializes OrderPrices
+        Args
+            side: BUY or SELL side
         """
         self.price_bst = BST()  # Prices stored in a binary search tree.
         self.side = side  # BUY or SELL order
-        self.price_map = {}  # Maps prices to lists of orders sorted by timestamp.
+        self.price_map = {}  # Maps prices to lists of order ids sorted by timestamp to reflect time priority of an order
         self.order_map = {}  # Maps order IDs to individual orders.
         self.max_price = None  # Highest price on the buy(bid) side
         self.min_price = None  # Lowest price on the sell(ask) side
@@ -231,12 +233,14 @@ class OrderPrices:
             price = self.max_price
         return price
         
-    def get_order(self, price) -> float:
+    def get_order(self, price) -> Order:
         """
             Returns the first order from the list of orders sorted by timestamp.
             First order has the highest time priority
         """
-        return self.price_map[price][0]
+        order_id = self.price_map[price][0]
+        return self.order_map[order_id]
+        
     
     def create_price(self, price: float) -> None:
         """Crates a new price entry in binary search tree"""
@@ -257,12 +261,12 @@ class OrderPrices:
     def insert_order(self, order: Order) -> None:
         """
             Insert order price in BST if doesn't exist already
-            Insert Order in sorted order list keyed against the price
-            Insert in order_map dict
+            Append Order order_id in sorted order list keyed against the price
+            Insert Order in order_map dict
         """
         if order.price not in self.price_map:
             self.create_price(order.price)
-        self.price_map.setdefault(order.price, []).append(order)
+        self.price_map.setdefault(order.price, []).append(order.order_id)
         self.order_map[order.order_id] = order
         
     def update_volume(self, order: Order) -> None:
@@ -273,19 +277,19 @@ class OrderPrices:
         if not is_volume_reduced:
             # If volume is not reduced then order looses it time priority and goes to the end of order list
             orig_order.timestamp = order.timestamp
-            orderlist = self.price_map[orig_order.price]
-            orderlist.remove(orig_order)
-            orderlist.append(orig_order)
+            order_ids = self.price_map[orig_order.price]
+            order_ids.remove(orig_order.order_id)
+            order_ids.append(orig_order.order_id)
             
     def cancel_order(self, order_id: int) -> None:
         """ Cancels an order """
         orig_order = self.order_map.pop(order_id, None)
         if not orig_order:
             raise OrderNotFoundException(f'Order not found for id:{order_id}')
-        price_orders = self.price_map[orig_order.price]
-        if price_orders:
-            price_orders.remove(orig_order)
-            if not price_orders:  # if no orders left at this price then remove from price_map and price_bst
+        price_order_ids = self.price_map[orig_order.price]
+        if price_order_ids:
+            price_order_ids.remove(orig_order.order_id)
+            if not price_order_ids:  # if no orders left at this price then remove from price_map and price_bst
                 del self.price_map[orig_order.price]
                 self.remove_price(orig_order.price)
         
@@ -294,7 +298,8 @@ class OrderPrices:
         prices = self.price_bst.values(reverse=True)
         result = []
         for price in prices:
-            orders = self.price_map[price]
+            order_ids = self.price_map[price]
+            orders = [self.order_map[order_id] for order_id in order_ids]
             tot_vol = sum([order.volume for order in orders])
             result.append(','.join([f"{self.side},{price:g},{tot_vol}"]))
         return result
